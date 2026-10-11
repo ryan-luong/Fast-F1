@@ -211,6 +211,56 @@ def test_session_results_drivers():
     drivers = session.results.index
     assert "47" in drivers
 
+
+def test_session_results_team_id_of_reserve_drivers():
+    # practice sessions use the Ergast driver list of the race; reserve
+    # drivers are not in it and get the TeamId of their teammate
+    session = fastf1.get_session(2024, "Silverstone", "FP1")
+    session.load(laps=False, telemetry=False, weather=False)
+    team_ids = session.results["TeamId"]
+    assert team_ids["37"] == "red_bull"  # Hadjar
+    assert team_ids["45"] == "williams"  # Colapinto
+    assert team_ids["50"] == "haas"  # Bearman
+    assert team_ids["61"] == "alpine"  # Doohan
+
+    # Sainz (55) is replaced by Bearman (38) after FP2
+    session = fastf1.get_session(2024, "Saudi Arabia", 2)
+    session.load(laps=False, telemetry=False, weather=False)
+    assert session.results.loc["55", "TeamId"] == "ferrari"
+
+
+def test_session_results_team_id_of_driver_missing_in_ergast(monkeypatch):
+    # a driver who did not take part in qualifying is listed by the F1 API
+    # but not in the Ergast results; simulate this by removing Verstappen (1)
+    # from the Ergast results
+    load_ergast = Session._drivers_results_from_ergast
+
+    def _load_ergast(self, **kwargs):
+        return load_ergast(self, **kwargs).drop(index="1")
+
+    monkeypatch.setattr(Session, "_drivers_results_from_ergast",
+                        _load_ergast)
+
+    session = fastf1.get_session(2024, "Spain", "Q")
+    session.load(laps=False, telemetry=False, weather=False)
+    assert session.results.loc["1", "TeamId"] == "red_bull"
+
+    # the TeamId is not set if the teammates do not agree on it; simulate
+    # this by moving Sargeant (2) to Red Bull Racing in the F1 API data
+    load_f1 = Session._drivers_from_f1_api
+
+    def _load_f1(self, **kwargs):
+        data = load_f1(self, **kwargs)
+        data.loc["2", "TeamName"] = "Red Bull Racing"
+        return data
+
+    monkeypatch.setattr(Session, "_drivers_from_f1_api", _load_f1)
+
+    session = fastf1.get_session(2024, "Spain", "Q")
+    session.load(laps=False, telemetry=False, weather=False)
+    assert session.results.loc["1", "TeamId"] not in ("red_bull", "williams")
+
+
 def test_practice_session_results_time_and_position():
     session = fastf1.get_session(2024, "Silverstone", "FP1")
     session.load(telemetry=False, weather=False)

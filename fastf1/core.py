@@ -2487,15 +2487,30 @@ class Session:
                 self.name in self._RACE_LIKE_SESSIONS
                 or self.name == "Qualifying"
             )
-            self._results = SessionResults(
-                driver_info_f1.join(
-                    driver_info_ergast.loc[:, join_cols],
-                    # Ergast driver list is not accurate for practice and
-                    # sprint qualifying sessions
-                    how="outer" if ergast_list_accurate else "left"
-                ),
-                _force_default_cols=True
+            driver_info = driver_info_f1.join(
+                driver_info_ergast.loc[:, join_cols],
+                # Ergast driver list is not accurate for practice and
+                # sprint qualifying sessions
+                how="outer" if ergast_list_accurate else "left"
             )
+
+            if "TeamId" in driver_info.columns:
+                # drivers who are missing in the Ergast data (e.g. reserve
+                # drivers in practice or a driver who did not take part in
+                # qualifying) have no TeamId; use the TeamId of a teammate
+                # with the same TeamName, if the teammates agree on it
+                team_ids = (
+                    driver_info.dropna(subset=["TeamName", "TeamId"])
+                    .drop_duplicates(subset=["TeamName", "TeamId"])
+                    .drop_duplicates(subset="TeamName", keep=False)
+                    .set_index("TeamName")["TeamId"]
+                )
+                missing = driver_info["TeamId"].isna()
+                driver_info.loc[missing, "TeamId"] \
+                    = driver_info.loc[missing, "TeamName"].map(team_ids)
+
+            self._results = SessionResults(driver_info,
+                                           _force_default_cols=True)
 
             if ergast_list_accurate:
                 # drivers are missing if DNSed (did not start)
