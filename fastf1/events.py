@@ -793,8 +793,10 @@ class EventSchedule(BaseDataFrame):
 
         reference = [_matcher_strings(event) for _, event in self.iterrows()]
 
+        # ratios around 50 are common between unrelated short names, e.g.
+        # "canada" vs. "tuscan"
         index, exact = fuzzy_matcher(name, reference,
-                                     abs_confidence=0.5,
+                                     abs_confidence=0.54,
                                      rel_confidence=0.1)
 
         event = self.iloc[index]

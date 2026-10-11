@@ -91,3 +91,58 @@ def test_relative_confidence_only_between_elements():
     assert fuzzy_matcher("Australian GP", reference) == (0, False)
     assert fuzzy_matcher(
         "Australian GP", reference, rel_confidence=0.3) == (0, False)
+
+
+def test_tie_on_shared_feature_string_selects_tied_element():
+    reference = [
+        ["Sakhir", "Bahrain", "Bahrain", "Gulf Air Bahrain"],
+        ["Sakhir", "Bahrain", "Sakhir", "Rolex Sakhir"],
+        ["Spielberg", "Austria", "Austrian", "Rolex Austrian"]
+    ]
+
+    # "Bahrian" matches the shared feature string "Bahrain" of the first two
+    # elements equally well. The remaining feature strings must only decide
+    # between these two elements. Prevent a bug where the third element was
+    # returned instead, because its best ratio is higher than the ratios that
+    # remain for the first two elements after removing "Bahrain" (#966).
+
+    assert fuzzy_matcher("Bahrian", reference) == (0, False)
+    assert fuzzy_matcher(
+        "Bahrian", reference, abs_confidence=0.5, rel_confidence=0.1
+    ) == (0, False)
+
+    # the remaining feature strings decide, not the order of the elements
+    reference[0], reference[1] = reference[1], reference[0]
+    assert fuzzy_matcher("Bahrian", reference) == (1, False)
+
+
+def test_tie_on_shared_feature_string_rel_confidence():
+    reference = [
+        ["Sakhir", "Bahrain", "Bahrain", "Gulf Air Bahrain"],
+        ["Sakhir", "Bahrain", "Sakhir", "Rolex Sakhir"],
+        ["Spielberg", "Austria", "Austrian", "Rolex Austrian"],
+        ["Budapest", "Hungary", "Hungarian", "Magyar Nagydij"]
+    ]
+
+    # "Azerbaijan" matches the shared feature string "Bahrain" of the first
+    # two elements best (58.8). The selected element keeps this ratio for
+    # the relative confidence check and is compared with the best other
+    # element, "Austrian" (55.6). This is less than 10% higher (#966).
+
+    assert fuzzy_matcher("Azerbaijan", reference) == (0, False)
+    with pytest.raises(FuzzyMatchError, match="relative confidence"):
+        fuzzy_matcher("Azerbaijan", reference, rel_confidence=0.1)
+
+
+def test_tie_on_shared_feature_string_no_remaining_ratios():
+    reference = [
+        ["Mugello", "Italy"],
+        ["Bahrain", "Bahrain"],
+        ["Bahrain", "Bahrain"]
+    ]
+
+    # After removing "Bahrain", no ratio remains for the last two elements.
+    # The first element must still not be selected, because it is not part
+    # of the tie (#966).
+
+    assert fuzzy_matcher("Bahrian", reference) == (1, False)

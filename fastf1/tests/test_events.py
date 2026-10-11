@@ -206,6 +206,31 @@ def test_event_fuzzy_unique_too_short():
         schedule.get_event_by_name("US")
 
 
+@pytest.mark.parametrize(
+    "year, gp",
+    [
+        # These events did not take place in this season. Each query
+        # matched an unrelated event with a ratio of 50 to 53.3 (#966).
+        (2020, "Chinese Grand Prix"),  # "chinese" vs. "sochi"
+        (2020, "Canada"),  # "canada" vs. "tuscan"
+        (2021, "Singapore"),  # "singapore" vs. "hungary"
+        (2020, "Singapur"),  # "singapur" vs. "hungary" (53.3)
+    ]
+)
+def test_event_fuzzy_search_event_not_in_season(year, gp):
+    with pytest.raises(FuzzyMatchError, match="absolute confidence"):
+        fastf1.get_event(year, gp)
+
+
+def test_event_fuzzy_search_typo_of_shared_location():
+    # In 2020, two events each took place in Spielberg, Silverstone and
+    # Sakhir. A typo of such a location must not return an unrelated
+    # event (#966).
+    assert fastf1.get_event(2020, "Spliebreg").Location == "Spielberg"
+    assert fastf1.get_event(2020, "Silverstne").Location == "Silverstone"
+    assert fastf1.get_event(2020, "Bahrian").Location == "Sakhir"
+
+
 def test_get_session_exceptions():
     # fuzzy match confidence is too low
     with pytest.raises(FuzzyMatchError, match="confidence"):

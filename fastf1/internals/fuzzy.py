@@ -91,10 +91,11 @@ def fuzzy_matcher(
 
     max_ratio = np.max(ratios)
     max_row_ratios = np.max(ratios, axis=1)
+    is_max_row = max_row_ratios == max_ratio
     # if there are multiple rows with the same maximum ratio, we need to remove
     # the corresponding ratios from the comparison so that we can match based
     # on the remaining feature string ratios
-    if np.sum(max_row_ratios == max_ratio) > 1:
+    if np.sum(is_max_row) > 1:
         # get counts of all unique ratios and remove all that are not unique
         # in the array by setting them to zero
         unique, counts = np.unique(reference, return_counts=True)
@@ -105,8 +106,13 @@ def fuzzy_matcher(
         # update the max row ratios
         max_row_ratios = np.max(ratios, axis=1)
 
-    # get the index of the row that contains the maximum ratio
-    max_index = np.argmax(ratios) // ratios.shape[1]
+    # get the index of the row that contains the maximum ratio; the remaining
+    # ratios only decide between the rows that were tied for the maximum, so
+    # that removing a shared feature string cannot select an unrelated row
+    max_index = np.argmax(np.where(is_max_row, max_row_ratios, -1))
+    # for the relative confidence check, the selected row keeps the maximum
+    # ratio and the other tied rows only count with their remaining ratios
+    max_row_ratios[max_index] = max_ratio
 
     # optional confidence checks
     if abs_confidence and (max_ratio < (abs_confidence * 100)):
