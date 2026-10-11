@@ -23,6 +23,15 @@ Behaviour Changes
 - Updated internal rate limits for Jolpica-F1 to match changed server
   side limits.
 
+- In races and sprints, the lap data no longer starts a new stint when a car
+  leaves the pit lane and the tyre data shows that it kept the same set of
+  tyres. This happens, for example, when the safety car leads the field
+  through the pit lane, or when a car serves a penalty without a tyre change.
+  The laps after such a pit lane visit keep the ``Stint`` and ``FreshTyre``
+  values of the stint before it, and their ``TyreLife`` counts on from the
+  start of that stint, which changes it on a few laps. Some false stints
+  remain where the source tyre data contradicts itself. (#717)
+
 
 New Features
 ^^^^^^^^^^^^

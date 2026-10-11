@@ -1471,7 +1471,7 @@ class Session:
         # new compound is associated with the help of logging time.
         data = data.drop(columns=["NumberOfPitStops"])
         useful = app_data[["Driver", "Time", "Compound", "StartLaps", "New",
-                           "Stint"]]
+                           "Stint", "TotalLaps", "TyresNotChanged"]]
 
         # remove first lap pitout time if it is before session_start_time
         mask = (data["PitOutTime"] < self.session_start_time) & \
@@ -2326,6 +2326,35 @@ class Session:
         # reapply original dtypes per column
         for col_name, dtype in zip(df.columns, df.dtypes, strict=True):
             corrected[col_name] = corrected[col_name].astype(dtype)
+
+        # ### Part 3: merge stints without a tyre change into the previous
+        #            stint
+        # ref: GH#717
+        # The source data starts a new stint each time a car leaves the pit
+        # lane, also if the tyres were not changed (for example, when the
+        # safety car leads the field through the pit lane). These stints are
+        # marked with TyresNotChanged == "1". This flag is sometimes not reset
+        # after a real tyre change. Therefore, a stint is only merged if the
+        # tyre data also shows the same set of tyres: same compound, not new,
+        # and the tyre age continues from the end of the previous stint.
+        # The tyre age at the start of the previous stint must be known, else
+        # the tyre life of the merged laps cannot be calculated.
+        # This is only done for race-like sessions. In other sessions, cars
+        # return to the garage between runs and may get a different used set
+        # of the same compound, which the tyre data cannot tell apart.
+        if self.name in self._RACE_LIKE_SESSIONS:
+            no_change = (
+                (corrected["TyresNotChanged"] == "1")
+                & corrected["New"].eq(False)
+                & (corrected["Compound"] != "UNKNOWN")
+                & (corrected["Compound"] == corrected["Compound"].shift())
+                & (corrected["StartLaps"] == corrected["TotalLaps"].shift())
+                & corrected["StartLaps"].shift().notna()
+            )
+            # renumber the remaining stints so that the numbering stays
+            # contiguous
+            corrected["Stint"] -= no_change.cumsum()
+            corrected = corrected.loc[~no_change]
 
         return corrected
 

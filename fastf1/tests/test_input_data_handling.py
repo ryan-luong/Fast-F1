@@ -304,6 +304,99 @@ def test_tyre_data_incorrect_stint_counter(year, round_, session, drv, stints):
         ).all()
 
 
+@pytest.mark.parametrize(
+    "year, round_, session, drv, stints",
+    (
+        # 2025 Australian GP Race, the safety car led the field through the
+        # pit lane on laps 2, 3 and 4 (GH#717)
+        (2025, "Australia", "Race", "VER",
+         [([1, 34], "INTERMEDIATE"),
+          ([35, 46], "MEDIUM"),
+          ([47, 57], "INTERMEDIATE")]),
+
+        # TSU changed tyres on laps 33 and 47, but the source data marks both
+        # new stints with TyresNotChanged == "1"
+        (2025, "Australia", "Race", "TSU",
+         [([1, 33], "INTERMEDIATE"),
+          ([34, 47], "MEDIUM"),
+          ([48, 57], "INTERMEDIATE")]),
+
+        # 2025 Miami GP Sprint, ANT drove through the pit lane at the end of
+        # lap 12 without stopping
+        (2025, "Miami", "Sprint", "ANT",
+         [([1, 13], "INTERMEDIATE"),
+          ([14, 18], "MEDIUM")]),
+
+        # 2018 Azerbaijan GP Race, ERI drove through the pit lane on lap 39
+        # without changing tyres (GH#751)
+        (2018, "Azerbaijan", "Race", "ERI",
+         [([1, 1], "SUPERSOFT"),
+          ([2, 18], "SOFT"),
+          ([19, 36], "ULTRASOFT"),
+          ([37, 51], "ULTRASOFT")]),
+    )
+)
+def test_tyre_data_pit_lane_pass_without_tyre_change(
+        year, round_, session, drv, stints
+):
+    # Driving through the pit lane without changing tyres must not start a
+    # new stint. The tyre data of the stint stays the same and the tyre life
+    # keeps counting.
+    session = fastf1.get_session(year, round_, session)
+    session.load(telemetry=False, weather=False)
+    laps = session.laps.pick_drivers(drv)
+
+    assert laps["Stint"].max() == len(stints)
+    for stint, ((start, end), compound) in enumerate(stints, start=1):
+        stint_laps = laps.pick_laps(range(start, end + 1))
+        assert (stint_laps["Stint"] == stint).all()
+        assert (stint_laps["Compound"] == compound).all()
+        assert (stint_laps["FreshTyre"]
+                == stint_laps["FreshTyre"].iloc[0]).all()
+        assert (stint_laps["TyreLife"].diff().dropna() == 1).all()
+
+
+def test_tyre_data_merge_conditions():
+    # Synthetic tyre data, one message per stint. Only the second stint is
+    # merged. Each merge condition is the only one that fails for one of the
+    # later stints. (GH#717)
+    session = fastf1.get_session(2025, "Australia", "Race")
+    # only set to avoid DataNotLoadedError, the session is not loaded
+    session._session_start_time = pd.Timedelta(minutes=1)
+    stints = [  # Compound, New, TyresNotChanged, StartLaps, TotalLaps
+        ("SOFT", True, "0", 0, 5),
+        ("SOFT", False, "1", 5, 8),  # merged
+        ("SOFT", False, "0", 8, 10),  # flag not set
+        ("SOFT", True, "1", 10, 12),  # new tyres
+        ("UNKNOWN", False, "1", 12, 14),  # setup for the next stint
+        ("UNKNOWN", False, "1", 14, 16),  # compound unknown
+        ("MEDIUM", False, "1", 16, 18),  # compound changed
+        ("MEDIUM", False, "1", None, 20),  # tyre age not carried over
+        ("MEDIUM", False, "1", 20, 22),  # previous tyre age unknown
+        ("MEDIUM", False, "1", 25, 27),  # tyre age higher than before
+        ("MEDIUM", False, "1", 26, 29),  # tyre age lower than before
+    ]
+    df = pd.DataFrame(stints, columns=["Compound", "New", "TyresNotChanged",
+                                       "StartLaps", "TotalLaps"])
+    df["Stint"] = range(len(df))
+    df["Time"] = pd.to_timedelta(df["Stint"] * 10 + 0.5, unit="min")
+    df["Driver"] = "1"
+    split_times = list(pd.to_timedelta(df["Stint"][1:] * 10, unit="min"))
+
+    out = session._Session__fix_tyre_info(df, split_times)
+    assert out["Stint"].tolist() == list(range(10))
+    assert out["Time"].tolist() == df["Time"].drop(1).tolist()
+
+
+def test_tyre_data_no_stint_merge_in_qualifying():
+    # Stints are only merged in race-like sessions. (GH#717)
+    # Without this restriction, LEC and SAI would end on stints 6 and 5.
+    session = fastf1.get_session(2022, "Saudi Arabia", "Q")
+    session.load(telemetry=False, weather=False, messages=False)
+    stints = session.laps.pick_drivers(["SAI", "LEC"]).groupby("Driver")
+    assert stints["Stint"].max().to_dict() == {"LEC": 7, "SAI": 7}
+
+
 def test_compounds_correct_after_delayed_tyre_data():
     # Tyre data was delayed and messages were bunched up with equivalent
     # timestamp after the start of the session. This requires special case
