@@ -1,3 +1,4 @@
+import copy
 import datetime
 
 import numpy as np
@@ -233,3 +234,101 @@ def test_personal_best_q_session_handled_individually():
         # If Quali session are not handled correctly individually, those laps are
         # not marked as personal best. (see issue #403)
         assert sum(ver['IsPersonalBest']) == 9
+
+
+def test_lap_time_of_previous_lap_received_again_ignored():
+    # requires clean parsing
+    with Cache.disabled(disable_http_cache=False, disable_func_cache=True):
+        session = fastf1.get_session(2023, 'Canada', 'Q')
+        laps_data, _ = fastf1._api.timing_data(session.api_path)
+
+        # When the session was resumed after the red flags in Q1 and Q3, the
+        # API sent the lap time, sector 3 time and finish line speed of the
+        # previous lap again for these in-laps. These values must not be
+        # assigned to the in-laps. (see issue #404)
+        for drv, lap_n in (('1', 25), ('11', 2), ('2', 3), ('4', 24),
+                           ('55', 23)):
+            lap = laps_data[(laps_data['Driver'] == drv)
+                            & (laps_data['NumberOfLaps'] == lap_n)].iloc[0]
+            assert pd.isna(lap['LapTime'])
+            assert pd.isna(lap['Sector3Time'])
+            assert pd.isna(lap['SpeedFL'])
+            # an in-lap cannot end before the car enters the pits
+            assert lap['Time'] > lap['PitInTime']
+
+
+def _resent():
+    # lap time, sector 3 time and finish line speed of lap 1
+    return {'LastLapTime': {'Value': '1:30.000'},
+            'Sectors': {'2': {'Value': '30.000'}},
+            'Speeds': {'FL': {'Value': '280'}}}
+
+
+def _laps_from_driver_raw(*messages):
+    # parse synthetic timing data of one driver, lap 1 starts at 00:00:02
+    driver_raw = [('00:00:01.000', {'InPit': False}),
+                  ('00:00:02.000', {'NumberOfLaps': 1}), *messages]
+    driver_raw_before = copy.deepcopy(driver_raw)
+    laps, _ = fastf1._api._laps_data_driver(driver_raw,
+                                            fastf1._api.EMPTY_LAPS, '1')
+    # the raw data must not be modified by the parser
+    assert driver_raw == driver_raw_before
+    return pd.DataFrame(laps).set_index('NumberOfLaps')
+
+
+def test_lap_time_of_previous_lap_received_again_ignored_synthetic():
+    # (see issue #404)
+    lap_1_end = ('00:01:32.000', {'NumberOfLaps': 2, **_resent()})
+    lap_2_end = ('00:04:00.000', {'NumberOfLaps': 3})
+
+    # Values of lap 1 that are received again during lap 2 are ignored.
+    # Other values in the same message belong to lap 2.
+    resent = _resent()
+    resent['Speeds']['I1'] = {'Value': '250'}
+    laps = _laps_from_driver_raw(lap_1_end,
+                                 # a list instead of a dict must not crash
+                                 ('00:02:30.000', {'LastLapTime': []}),
+                                 ('00:03:00.000', resent), lap_2_end)
+    assert pd.isna(laps.loc[2, 'LapTime'])
+    assert pd.isna(laps.loc[2, 'Sector3Time'])
+    assert pd.isna(laps.loc[2, 'SpeedFL'])
+    assert laps.loc[2, 'SpeedI1'] == 250
+
+    # An empty lap time of lap 2 is not calculated from the sector times,
+    # because the sector 3 time is the one of lap 1.
+    laps = _laps_from_driver_raw(
+        lap_1_end, ('00:02:02.000', {'Sectors': {'0': {'Value': '29.000'}}}),
+        ('00:02:50.000', {'LastLapTime': {'Value': ''},
+                          'Sectors': {'1': {'Value': '30.000'},
+                                      '2': {'Value': '30.000'}}}),
+        ('00:03:00.000', _resent()), lap_2_end)
+    assert pd.isna(laps.loc[2, 'LapTime'])
+
+    # A different lap time of lap 2 that was received before is kept.
+    laps = _laps_from_driver_raw(
+        lap_1_end, ('00:03:00.000', {'LastLapTime': {'Value': '1:28.000'}}),
+        ('00:03:00.100', _resent()), lap_2_end)
+    assert laps.loc[2, 'LapTime'] == pd.Timedelta(seconds=88)
+
+
+def test_lap_time_equal_to_previous_lap_kept_synthetic():
+    # Values equal to those of the previous lap are kept if they are received
+    # with the start of a new lap or up to five seconds after it.
+    # (see issue #404)
+    laps = _laps_from_driver_raw(
+        ('00:01:32.000', {'NumberOfLaps': 2,
+                          'LastLapTime': {'Value': '1:30.000'}}),
+        ('00:01:33.000', _resent()),
+        ('00:03:02.000', {'NumberOfLaps': 3, **_resent()}))
+    assert laps.loc[1, 'Sector3Time'] == pd.Timedelta(seconds=30)
+    assert laps.loc[2, 'LapTime'] == pd.Timedelta(seconds=90)
+
+    # A lap time equal to an earlier lap, but not to the previous one, is
+    # kept, also if it is received before the start of the next lap.
+    laps = _laps_from_driver_raw(
+        ('00:01:32.000', {'NumberOfLaps': 2, **_resent()}),
+        ('00:03:03.000', {'NumberOfLaps': 3,
+                          'LastLapTime': {'Value': '1:31.000'}}),
+        ('00:04:33.000', {'LastLapTime': {'Value': '1:30.000'}}),
+        ('00:04:34.500', {'NumberOfLaps': 4}))
+    assert laps.loc[3, 'LapTime'] == pd.Timedelta(seconds=90)

@@ -451,6 +451,37 @@ def _laps_data_driver(driver_raw, empty_vals, drv):
         if (lapcnt > 0) and (to_timedelta(time) - drv_data["Time"][lapcnt - 1] < pd.Timedelta(5, "s")):
             lap_offset = 1
 
+        # Sometimes, the API sends the lap time of the previous lap again
+        # without starting a new lap, for example when a session is resumed
+        # after a red flag (see #404). The sector 3 time and finish line
+        # speed of the previous lap can be sent again in the same message.
+        # Ignore these three values, otherwise they would be assigned to the
+        # current lap. In practice, the API does not send an unchanged lap
+        # time again, so a genuine lap with the same lap time does not arrive
+        # this way.
+        if ((lap_offset == 0) and (lapcnt > 0)
+                and ("NumberOfLaps" not in resp)
+                and isinstance(last_lap_time := resp.get("LastLapTime"), dict)
+                and (lap_time := to_timedelta(last_lap_time.get("Value")))
+                and (lap_time == drv_data["LapTime"][lapcnt - 1])):
+            _logger.debug(f"Driver {drv: >2}: Ignoring lap time "
+                          f"{last_lap_time['Value']} of the previous lap, "
+                          f"which was received again at {time}")
+            # do not modify the raw data, work on a copy
+            resp = {key: value for key, value in resp.items()
+                    if key != "LastLapTime"}
+            if isinstance(resp.get("Sectors"), dict):
+                resp["Sectors"] = {key: value for key, value
+                                   in resp["Sectors"].items() if key != "2"}
+            if isinstance(resp.get("Speeds"), dict):
+                resp["Speeds"] = {key: value for key, value
+                                  in resp["Speeds"].items() if key != "FL"}
+            # If an empty lap time (None) was received for the current lap,
+            # it would be calculated from the sector times later. These can be
+            # outdated as well, therefore, set NaT instead.
+            if drv_data["LapTime"][lapcnt] is None:
+                drv_data["LapTime"][lapcnt] = pd.NaT
+
         if "Sectors" in resp and isinstance(resp["Sectors"], dict):
             # sometimes it's a list but then it never contains values...
             for sn, sector, sesst in (("0", "Sector1Time", "Sector1SessionTime"),
