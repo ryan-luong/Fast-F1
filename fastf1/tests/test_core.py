@@ -190,6 +190,20 @@ def test_tyre_data_parsing():
     assert compare.equals(ref)
 
 
+def test_quali_results_classified_position():
+    # integer positions, as in race results; "N" if not classified
+    session = fastf1.get_session(2023, "Azerbaijan", "Q")
+    session.load(laps=False, telemetry=False, weather=False)
+    expected = [str(pos) for pos in range(1, 20)] + ["N"]
+    assert list(session.results["ClassifiedPosition"]) == expected
+
+    # results calculated from lap times
+    session = fastf1.get_session(2024, "China", "SQ")
+    session.load(telemetry=False, weather=False)
+    expected = [str(pos) for pos in range(1, 21)]
+    assert list(session.results["ClassifiedPosition"]) == expected
+
+
 def test_session_results_drivers():
     # Sainz (55) is replaced by Bearman (38) after FP2
     session = fastf1.get_session(2024, "Saudi Arabia", 2)

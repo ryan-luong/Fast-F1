@@ -1940,7 +1940,8 @@ class Session:
         fastest_q1 = quali_results["Q1"].min()
         eliminated = quali_results["Q2"].isna()
         nc = (quali_results["Q1"] > (fastest_q1 * 1.07)) & eliminated
-        c_pos = quali_results["Position"].astype(str)
+        # format as integer, e.g. "1" instead of "1.0"
+        c_pos = quali_results["Position"].map("{:.0f}".format)
         c_pos.loc[nc] = "N"
         quali_results["ClassifiedPosition"] = c_pos
 
@@ -2524,7 +2525,8 @@ class Session:
             fastest_q1 = self._results["Q1"].min()
             eliminated = self._results["Q2"].isna()
             nc = (self._results["Q1"] > (fastest_q1 * 1.07)) & eliminated
-            c_pos = self._results["Position"].astype(str)
+            # format as integer, e.g. "1" instead of "1.0"
+            c_pos = self._results["Position"].map("{:.0f}".format)
             c_pos.loc[nc] = "N"
             self._results["ClassifiedPosition"] = c_pos
 
